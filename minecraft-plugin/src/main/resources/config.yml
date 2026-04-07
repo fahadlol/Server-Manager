@@ -1,0 +1,3 @@
+# StaffManager Configuration
+# The API key you set in the AI Studio Secrets panel as MINECRAFT_API_KEY
+api-key: "YOUR_API_KEY_HERE"

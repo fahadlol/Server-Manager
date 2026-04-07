@@ -1,0 +1,5 @@
+{
+  "name": "Staff Manager",
+  "description": "A centralized platform for managing multiple servers, staff teams, permissions, and punishments.",
+  "requestFramePermissions": []
+}

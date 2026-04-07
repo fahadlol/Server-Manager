@@ -1,0 +1,201 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {uid}
+    // Fields:
+    //   - uid: string (required)
+    //   - email: string (required, email format)
+    //   - minecraftUsername: string (optional)
+    //   - minecraftUuid: string (optional)
+    //   - discordUsername: string (optional)
+    //   - role: string (required, enum: ['owner', 'admin', 'mod', 'helper', 'user'])
+    //   - servers: list (optional, list of server IDs)
+    //
+    // Collection: servers
+    // Document ID: {serverId}
+    // Fields:
+    //   - id: string (required)
+    //   - name: string (required)
+    //   - logoUrl: string (optional, uri format)
+    //   - ownerUid: string (required)
+    //   - theme: map (optional, {primaryColor, secondaryColor})
+    //   - staff: list (optional, list of user UIDs)
+    //
+    // Collection: punishments
+    // Document ID: {punishmentId}
+    // Fields:
+    //   - id: string (required)
+    //   - serverId: string (required)
+    //   - playerUsername: string (required)
+    //   - staffUid: string (required)
+    //   - type: string (required, enum: ['warn', 'mute', 'tempban', 'permban'])
+    //   - reason: string (required)
+    //   - timestamp: timestamp (required)
+    //   - proofUrl: string (optional, uri format)
+    //   - active: bool (optional)
+    //   - expiresAt: timestamp (optional)
+    //
+    // Collection: loas
+    // Document ID: {loaId}
+    // Fields:
+    //   - id: string (required)
+    //   - staffUid: string (required)
+    //   - serverId: string (required)
+    //   - startDate: timestamp (required)
+    //   - endDate: timestamp (required)
+    //   - reason: string (required)
+    //   - status: string (required, enum: ['pending', 'approved', 'rejected'])
+    //
+    // Collection: threads
+    // Document ID: {threadId}
+    // Fields:
+    //   - id: string (required)
+    //   - serverId: string (required)
+    //   - title: string (required)
+    //   - authorUid: string (required)
+    //   - createdAt: timestamp (required)
+    //   - messages: list (required, list of maps {authorUid, content, timestamp})
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function getUserData() {
+      let path = /databases/$(database)/documents/users/$(request.auth.uid);
+      return exists(path) ? get(path).data : null;
+    }
+
+    function isDefaultAdminEmail() {
+      return isAuthenticated() && request.auth.token.email in ["oblueberrey@gmail.com", "oblueberry@gmail.com", "support@snoozmnky.store"];
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        isDefaultAdminEmail() || 
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['owner', 'admin'])
+      );
+    }
+
+    function isStaffMember() {
+      return isAuthenticated() && (
+        isAdmin() || 
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['mod', 'helper'])
+      );
+    }
+
+    function isStaff(serverId) {
+      return isStaffMember();
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{uid} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isOwner(uid) && 
+        hasOnlyAllowedFields(['uid', 'email', 'minecraftUsername', 'minecraftUuid', 'discordUsername', 'role', 'servers']) &&
+        (
+          (isDefaultAdminEmail() && request.resource.data.role == 'owner') ||
+          (!isDefaultAdminEmail() && request.resource.data.role in ['owner', 'admin', 'mod', 'helper', 'user'])
+        );
+      allow update: if isAuthenticated() && (
+        (isOwner(uid) && hasOnlyAllowedFields(['minecraftUsername', 'minecraftUuid', 'discordUsername']) && request.resource.data.role == resource.data.role) ||
+        isAdmin()
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /servers/{serverId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /punishments/{punishmentId} {
+      allow read: if isAuthenticated() && (
+        isAdmin() ||
+        (getUserData().role == 'mod' && resource.data.type in ['warn', 'mute', 'tempban', 'permban']) ||
+        (getUserData().role == 'helper' && resource.data.type in ['warn', 'mute'])
+      );
+      allow create, update: if isAuthenticated() && isStaff(request.resource.data.serverId);
+      allow delete: if isAdmin();
+    }
+
+    match /loas/{loaId} {
+      allow read: if isAuthenticated() && (isOwner(resource.data.staffUid) || isAdmin());
+      allow create: if isAuthenticated() && isOwner(request.resource.data.staffUid);
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /threads/{threadId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && (isOwner(resource.data.authorUid) || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    match /invites/{inviteId} {
+      allow read: if true; // Allow unauthenticated reads for registration
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (
+        isAuthenticated() && 
+        resource.data.used == false && 
+        request.resource.data.used == true && 
+        request.resource.data.usedBy == request.auth.uid &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy'])
+      );
+    }
+
+    match /staff_notes/{noteId} {
+      allow read, write: if isAdmin();
+    }
+    
+    match /notifications/{notificationId} {
+      allow read: if isAuthenticated() && isOwner(resource.data.userId);
+      allow create: if isAuthenticated(); // Allow system or staff to create notifications
+      allow update: if isAuthenticated() && isOwner(resource.data.userId) && 
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
+      allow delete: if isAuthenticated() && isOwner(resource.data.userId);
+    }
+
+    match /servers/{serverId}/announcements/{announcementId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /servers/{serverId}/rules/{ruleId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /servers/{serverId}/guides/{guideId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+  }
+}

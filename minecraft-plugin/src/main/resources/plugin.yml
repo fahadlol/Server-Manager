@@ -1,0 +1,13 @@
+name: StaffManager
+version: 1.0
+main: store.snoozmnky.staffmanager.StaffManager
+api-version: '1.20'
+commands:
+  staffnotes:
+    description: Manage staff notes.
+    usage: /staffnotes <player> [add <note...>]
+    permission: staffmanager.admin
+permissions:
+  staffmanager.admin:
+    description: Allows access to staff notes.
+    default: op
